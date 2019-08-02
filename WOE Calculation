@@ -1,0 +1,100 @@
+#Calculate WOE
+def count_binary(a, event=1):
+        event_count = (a == event).sum()
+        non_event_count = a.shape[-1] - event_count
+        return event_count, non_event_count
+
+def highlight_max(s):
+    '''
+    highlight the maximum in a Series yellow.
+    '''
+    is_min = s < 0.6
+    return ['color: red' if v else '' for v in is_min]
+
+def odd_minority(x_t,minor):
+    if minor=='fem':
+        y_white=x_t[x_t['fem']==0]['Z_decision']
+    elif minor=='age_ge62':
+        y_white=x_t[x_t['age_ge62']==0]['Z_decision']
+    else:
+        y_white=x_t[x_t['white']==1]['Z_decision']
+    y_black=x_t[x_t[minor]==1]['Z_decision']
+    event_count_B, non_event_count_B = count_binary(y_black, event=1)
+    event_rate_B=event_count_B/(event_count_B+non_event_count_B)
+    event_count_W, non_event_count_W = count_binary(y_white, event=1)
+    event_rate_W=event_count_W/(event_count_W+non_event_count_W)
+    odd_black=(event_rate_B/(1-event_rate_B))/(event_rate_W/(1-event_rate_W))
+    return round(odd_black,2)
+ 
+
+def woe_explore_bin(data,Quarter,var,n_bin):
+        if Quarter=='All':
+            x_f=data
+        else:
+            x_f=data[data['Qter']==int(Quarter)]
+        y=x_f['Z_decision']
+        max_uni_val=50
+        x=x_f[var]
+        x_labels_t = np.unique(x)
+        if len(x_labels_t)>max_uni_val:
+            x=pd.qcut(x,n_bin,duplicates='drop')
+        x_labels = x.value_counts(sort=False).index
+        event_total, non_event_total = count_binary(y, event=1)
+        columns=['# of Obs','% of Total','Approval Rate','Woe','App Rate chart','Info','black_or','hispa_or','asian_or','female_or',
+                'age_ge62_or']
+        x_label_f=np.append(x_labels,'Total')
+        df_woe=pd.DataFrame(index=x_label_f,columns=columns)
+        str_total='------+------'
+        iv = 0
+        num_record=len(y)
+        app_rate={}
+        for x1 in x_labels:
+            x_t = x_f[x == x1]
+            y1 = x_t['Z_decision']
+            event_count, non_event_count = count_binary(y1, event=1)
+            event_rate=event_count/(event_count+non_event_count)
+            event_pct = 1.0 * event_count / event_total
+            non_event_pct = 1.0 * non_event_count / non_event_total
+            woe1 = math.log(event_pct / non_event_pct)
+            df_woe.loc[x1,'Woe']=round(woe1,2)
+            df_woe.loc[x1,'# of Obs']=len(y1)
+            df_woe.loc[x1,'% of Total']="{0:.1f}%".format(df_woe.loc[x1,'# of Obs']*100/num_record)
+            app_rate[x1]=event_rate
+            df_woe.loc[x1,'Approval Rate']="{0:.1f}%".format(event_rate*100)
+            iv_b=(event_pct - non_event_pct) * woe1
+            df_woe.loc[x1,'Info']=round(iv_b,2)
+            iv +=iv_b
+            df_woe.loc[x1,'black_or']=odd_minority(x_t=x_t,minor='black')
+            df_woe.loc[x1,'hispa_or']=odd_minority(x_t=x_t,minor='hispanic')
+            df_woe.loc[x1,'asian_or']=odd_minority(x_t=x_t,minor='asian')
+            df_woe.loc[x1,'female_or']=odd_minority(x_t=x_t,minor='fem')
+            df_woe.loc[x1,'age_ge62_or']=odd_minority(x_t=x_t,minor='age_ge62')
+        app_rate_std=pd.Series(app_rate).std()
+        event_rate_total=event_total/(event_total+non_event_total)
+        for x2 in x_labels:
+            distance_std=int(round((app_rate[x2]-event_rate_total)*3/app_rate_std,0))
+            if distance_std<-6:
+                df_woe.loc[x2,'App Rate chart']='******+------'
+            elif distance_std>6:
+                df_woe.loc[x2,'App Rate chart']='------+******'
+            elif distance_std<=0:
+                str_t=list(str_total)
+                str_t[(6+distance_std):6]='*'*abs(distance_std)
+                df_woe.loc[x2,'App Rate chart']=''.join(str_t)
+            else:
+                str_t=list(str_total)
+                str_t[7:(7+distance_std)]='*'*abs(distance_std)
+                df_woe.loc[x2,'App Rate chart']=''.join(str_t)
+        df_woe.loc['Total','black_or']=odd_minority(x_t=x_f,minor='black')
+        df_woe.loc['Total','hispa_or']=odd_minority(x_t=x_f,minor='hispanic')
+        df_woe.loc['Total','asian_or']=odd_minority(x_t=x_f,minor='asian')
+        df_woe.loc['Total','female_or']=odd_minority(x_t=x_f,minor='fem')
+        df_woe.loc['Total','age_ge62_or']=odd_minority(x_t=x_f,minor='age_ge62')
+        df_woe.loc['Total','# of Obs']=df_woe['# of Obs'].sum()
+        df_woe.loc['Total','% of Total']="{0:.1f}%".format(df_woe.loc['Total','# of Obs']*100/num_record)
+        df_woe.loc['Total','Approval Rate']="{0:.1f}%".format(event_rate_total*100)
+        df_woe.loc['Total','Woe']=round(0,2)
+        df_woe.loc['Total','App Rate chart']=str_total
+        df_woe.loc['Total','Info']=round(iv,2)
+        #df_woe.index.name = var
+        return df_woe.style.apply(highlight_max,subset= ['black_or','hispa_or','asian_or','female_or','age_ge62_or'])
